@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
-import { X, AlertTriangle, MapPin, Send, Loader2, CheckCircle } from 'lucide-react';
+import { X, AlertTriangle, MapPin, Send, Loader2, CheckCircle, ShieldAlert, Info } from 'lucide-react';
 
 const hazardTypes = [
   { value: 'Flooded Road', emoji: '🌊', color: 'text-blue-400' },
@@ -10,9 +10,17 @@ const hazardTypes = [
   { value: 'Medical Need', emoji: '🏥', color: 'text-red-400' },
 ];
 
+const severityLevels = [
+  { value: 'low', label: 'Low', icon: Info, color: 'text-blue-400', bg: 'bg-blue-400/10' },
+  { value: 'medium', label: 'Medium', icon: ShieldAlert, color: 'text-amber-400', bg: 'bg-amber-400/10' },
+  { value: 'high', label: 'High', icon: AlertTriangle, color: 'text-red-400', bg: 'bg-red-400/10' },
+];
+
 export default function ReportModal({ isOpen, onClose, coords, userId }) {
   const [hazardType, setHazardType] = useState('');
+  const [severity, setSeverity] = useState('medium');
   const [description, setDescription] = useState('');
+  const [locationName, setLocationName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
@@ -26,16 +34,20 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
         type: 'hazard',
         lat: coords.lat,
         lng: coords.lng,
-        description: `${hazardType}${description ? ': ' + description : ''}`,
+        description: `${hazardType}${locationName ? ' @ ' + locationName : ''}${description ? ': ' + description : ''}`,
+        severity: severity,
         timestamp: Date.now(),
         reportedBy: userId || 'anonymous',
+        confirmations: [userId || 'anonymous'], // Initial reporter counts as first confirmation
       });
 
       setSubmitted(true);
       setTimeout(() => {
         setSubmitted(false);
         setHazardType('');
+        setSeverity('medium');
         setDescription('');
+        setLocationName('');
         onClose();
       }, 1500);
     } catch (error) {
@@ -49,7 +61,9 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
   const handleClose = () => {
     if (!submitting) {
       setHazardType('');
+      setSeverity('medium');
       setDescription('');
+      setLocationName('');
       setSubmitted(false);
       onClose();
     }
@@ -113,6 +127,19 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
 
               {/* Form */}
               <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Location Name Input */}
+                <div>
+                  <label className="block text-[10px] text-resq-muted font-black uppercase tracking-widest mb-1.5 px-1">
+                    Location Name / Landmark
+                  </label>
+                  <input
+                    type="text"
+                    value={locationName}
+                    onChange={(e) => setLocationName(e.target.value)}
+                    placeholder="e.g. Near Central Metro Station"
+                    className="input-field py-2 text-sm"
+                  />
+                </div>
                 {/* Hazard type selection */}
                 <div>
                   <label className="block text-xs font-semibold text-resq-muted uppercase tracking-wider mb-2">
@@ -138,6 +165,37 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
                         </span>
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                {/* Severity Selection */}
+                <div>
+                  <label className="block text-xs font-semibold text-resq-muted uppercase tracking-wider mb-2">
+                    Severity Level
+                  </label>
+                  <div className="flex gap-2">
+                    {severityLevels.map((lvl) => {
+                      const Icon = lvl.icon;
+                      return (
+                        <button
+                          key={lvl.value}
+                          type="button"
+                          onClick={() => setSeverity(lvl.value)}
+                          className={`flex-1 py-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${
+                            severity === lvl.value
+                              ? `border-resq-accent bg-resq-accent/10`
+                              : 'border-resq-border/30 bg-resq-dark/30'
+                          }`}
+                        >
+                          <Icon size={14} className={severity === lvl.value ? lvl.color : 'text-resq-muted'} />
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                            severity === lvl.value ? 'text-resq-text' : 'text-resq-muted'
+                          }`}>
+                            {lvl.label}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 

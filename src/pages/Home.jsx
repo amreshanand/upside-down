@@ -6,6 +6,7 @@ import Map from '../components/Map';
 import AlertFeed from '../components/AlertFeed';
 import ReportModal from '../components/ReportModal';
 import AIChat from '../components/AIChat';
+import NotificationHub from '../components/NotificationHub';
 import { AlertTriangle, Navigation } from 'lucide-react';
 
 export default function Home({ user }) {
@@ -45,27 +46,132 @@ export default function Home({ user }) {
   useEffect(() => {
     const q = query(collection(db, 'zones'), orderBy('timestamp', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const zoneData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setZones(zoneData);
+      // Create dummy data near the user's current location for demonstration
+      const baseLat = userLocation?.lat || 19.076;
+      const baseLng = userLocation?.lng || 72.8777;
+
+      const dummyZones = [
+        { 
+          id: 'demo-danger-1', 
+          type: 'danger', 
+          lat: baseLat + 0.008, 
+          lng: baseLng + 0.006, 
+          description: 'CRITICAL: Severe waterlogging at Main Square. Avoid for next 4 hours.', 
+          timestamp: Date.now() - 3600000,
+          confirmations: ['a1', 'a2', 'a3'] 
+        },
+        { 
+          id: 'demo-danger-2', 
+          type: 'danger', 
+          lat: baseLat - 0.007, 
+          lng: baseLng + 0.012, 
+          description: 'EMERGENCY: Power lines down. Hazardous area. Utility crews on site.', 
+          timestamp: Date.now() - 1500000,
+          confirmations: ['b1', 'b2', 'b3', 'b4'] 
+        },
+        { 
+          id: 'demo-safe-1', 
+          type: 'safe', 
+          lat: baseLat - 0.012, 
+          lng: baseLng - 0.008, 
+          description: 'SAFE ZONE: Central High School Shelter. Medical staff present.', 
+          timestamp: Date.now() - 7200000,
+          confirmations: []
+        },
+        { 
+          id: 'demo-safe-2', 
+          type: 'safe', 
+          lat: baseLat + 0.015, 
+          lng: baseLng - 0.002, 
+          description: 'SAFE ZONE: Westside Church Shelter. Food and water available.', 
+          timestamp: Date.now() - 10800000,
+          confirmations: []
+        },
+        { 
+          id: 'demo-hazard-1', 
+          type: 'hazard', 
+          lat: baseLat + 0.004, 
+          lng: baseLng - 0.005, 
+          description: 'HAZARD: Large sinkhole opening near Park Street intersection.', 
+          timestamp: Date.now() - 1800000,
+          confirmations: ['user-1'] 
+        },
+        { 
+          id: 'demo-hazard-2', 
+          type: 'hazard', 
+          lat: baseLat - 0.003, 
+          lng: baseLng + 0.004, 
+          description: 'HAZARD: Major traffic jam due to landslide debris.', 
+          timestamp: Date.now() - 900000,
+          confirmations: ['user-2', 'user-3'] 
+        },
+        { 
+          id: 'demo-hazard-3', 
+          type: 'hazard', 
+          lat: baseLat + 0.010, 
+          lng: baseLng + 0.002, 
+          description: 'HAZARD: Broken water main causing slippery road conditions.', 
+          timestamp: Date.now() - 5400000,
+          confirmations: [] 
+        }
+      ];
+      // Filter out any real data that is further than 10km away to keep it hyperlocal
+      const filterByDistance = (lat, lng) => {
+        if (!userLocation) return true; // Show all if location not yet loaded
+        const R = 6371; // Radius of the earth in km
+        const dLat = (lat - userLocation.lat) * Math.PI / 180;
+        const dLon = (lng - userLocation.lng) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(userLocation.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * 
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        const d = R * c; // Distance in km
+        return d <= 10; // Only show within 10km
+      };
+
+      const zoneData = snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter(z => filterByDistance(z.lat, z.lng));
+
+      setZones([...dummyZones, ...zoneData]);
     }, (error) => {
       console.error('Zones listener error:', error);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [userLocation]);
 
   // Real-time alerts listener
   useEffect(() => {
     const q = query(collection(db, 'alerts'), orderBy('timestamp', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      const dummyAlerts = [
+        { 
+          id: 'a1', 
+          title: 'LOCAL AUTHORITY: Heavy Rainfall', 
+          message: 'Intense rainfall detected in your immediate vicinity. Stay indoors and avoid low-lying areas.', 
+          severity: 'high', 
+          timestamp: Date.now() - 900000,
+          isOfficial: true,
+          source: 'Disaster MGMT',
+          location: 'Your Current Area'
+        },
+        { 
+          id: 'a2', 
+          title: 'HYPERLOCAL: Road Blockage', 
+          message: 'A hazard has been verified by 3+ neighbors nearby. Traffic is being diverted.', 
+          severity: 'medium', 
+          timestamp: Date.now() - 3600000,
+          isOfficial: false,
+          source: 'Verified Report',
+          location: '1.2km Away'
+        }
+      ];
       const alertData = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
-      setAlerts(alertData);
+      setAlerts([...dummyAlerts, ...alertData]);
     }, (error) => {
       console.error('Alerts listener error:', error);
     });
@@ -139,6 +245,9 @@ export default function Home({ user }) {
         onMapClick={handleMapClick}
       />
 
+      {/* Notification Hub (Toasts) */}
+      <NotificationHub alerts={alerts} />
+
       {/* Alert Feed Panel */}
       <AlertFeed
         alerts={alerts}
@@ -150,6 +259,8 @@ export default function Home({ user }) {
       <AIChat
         isOpen={showChat}
         onClose={() => setShowChat(false)}
+        zones={zones}
+        alerts={alerts}
       />
 
       {/* Report Hazard Modal */}
