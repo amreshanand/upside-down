@@ -1,40 +1,25 @@
-import { useCallback, useRef, useState, useMemo } from 'react';
-import { GoogleMap, useJsApiLoader, Marker, InfoWindow } from '@react-google-maps/api';
-import { MapPin, AlertTriangle, ShieldCheck, AlertCircle } from 'lucide-react';
+import { useCallback, useState, useMemo, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
+import { db } from '../firebase';
+import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { MapPin, AlertTriangle, ShieldCheck, AlertCircle, ThumbsUp, CheckCircle2 } from 'lucide-react';
 
-const mapContainerStyle = {
-  width: '100%',
-  height: '100%',
-};
+// Fix for default marker icons in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
-const darkMapStyles = [
-  { elementType: 'geometry', stylers: [{ color: '#0a0e17' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0a0e17' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#546e8a' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#8fa4bd' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#546e8a' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#0f1a2b' }] },
-  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#3a6b4f' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#151d2e' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a2540' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#1a2540' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1e2d44' }] },
-  { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#8fa4bd' }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#111827' }] },
-  { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#8fa4bd' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#060a12' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#2a3f5f' }] },
-];
-
-const libraries = ['places'];
-
-// SVG marker icons as data URIs
-function createMarkerIcon(color, glowColor) {
+// SVG marker icons as Leaflet DivIcons
+function createMarkerIcon(color, glowColor, isVerified) {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="36" height="44" viewBox="0 0 36 44">
       <defs>
         <filter id="glow">
-          <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+          <feGaussianBlur stdDeviation="${isVerified ? '3' : '1'}" result="coloredBlur"/>
           <feMerge>
             <feMergeNode in="coloredBlur"/>
             <feMergeNode in="SourceGraphic"/>
@@ -42,17 +27,37 @@ function createMarkerIcon(color, glowColor) {
         </filter>
       </defs>
       <path d="M18 2C9.716 2 3 8.716 3 17c0 11.25 15 25 15 25s15-13.75 15-25C33 8.716 26.284 2 18 2z" 
-            fill="${color}" stroke="${glowColor}" stroke-width="1.5" filter="url(#glow)" opacity="0.95"/>
-      <circle cx="18" cy="17" r="6" fill="white" opacity="0.9"/>
+            fill="${color}" stroke="${glowColor}" stroke-width="${isVerified ? '2.5' : '1'}" 
+            filter="url(#glow)" opacity="${isVerified ? '1' : '0.4'}"/>
+      <circle cx="18" cy="17" r="6" fill="white" opacity="${isVerified ? '1' : '0.5'}"/>
     </svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  
+  return L.divIcon({
+    html: svg,
+    className: `custom-marker-icon ${isVerified ? 'verified-marker' : 'unverified-marker'}`,
+    iconSize: [36, 44],
+    iconAnchor: [18, 44],
+    popupAnchor: [0, -44],
+  });
 }
 
 const markerIcons = {
-  danger: createMarkerIcon('#ef4444', '#ff6b6b'),
-  safe: createMarkerIcon('#22c55e', '#4ade80'),
-  hazard: createMarkerIcon('#f59e0b', '#fbbf24'),
+  danger: (v) => createMarkerIcon('#ef4444', '#ff6b6b', v),
+  safe: (v) => createMarkerIcon('#22c55e', '#4ade80', v),
+  hazard: (v) => createMarkerIcon('#f59e0b', '#fbbf24', v),
 };
+
+const userLocationIcon = L.divIcon({
+  html: `
+    <div class="relative flex items-center justify-center">
+      <div class="absolute w-8 h-8 rounded-full bg-blue-500/30 animate-ping"></div>
+      <div class="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg z-10"></div>
+    </div>
+  `,
+  className: 'user-location-icon',
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+});
 
 const typeLabels = {
   danger: { label: 'Danger Zone', icon: AlertTriangle, color: 'text-red-400', bg: 'bg-red-500/15' },
@@ -73,147 +78,162 @@ function getTimeAgo(timestamp) {
   return `${days}d ago`;
 }
 
-export default function Map({ zones, userLocation, onMapClick }) {
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
-    libraries,
-  });
-
-  const mapRef = useRef(null);
-  const [selectedZone, setSelectedZone] = useState(null);
-
-  const center = useMemo(() => userLocation || { lat: 19.076, lng: 72.8777 }, [userLocation]);
-
-  const options = useMemo(() => ({
-    styles: darkMapStyles,
-    disableDefaultUI: true,
-    zoomControl: true,
-    mapTypeControl: false,
-    scaleControl: false,
-    streetViewControl: false,
-    rotateControl: false,
-    fullscreenControl: false,
-    clickableIcons: false,
-    minZoom: 4,
-    maxZoom: 18,
-    zoomControlOptions: {
-      position: 3, // RIGHT_BOTTOM (approximate, will use google.maps.ControlPosition when available)
-    },
-  }), []);
-
-  const onLoad = useCallback((map) => {
-    mapRef.current = map;
-  }, []);
-
-  const handleMapClick = useCallback((e) => {
-    if (e.latLng) {
-      onMapClick({
-        lat: e.latLng.lat(),
-        lng: e.latLng.lng(),
-      });
+function MapController({ center }) {
+  const map = useMapEvents({});
+  useEffect(() => {
+    if (center) {
+      map.setView([center.lat, center.lng], map.getZoom());
     }
-  }, [onMapClick]);
+  }, [center, map]);
+  return null;
+}
 
-  if (loadError) {
-    return (
-      <div className="h-full w-full flex items-center justify-center bg-resq-dark">
-        <div className="glass-panel p-8 text-center max-w-md">
-          <MapPin size={48} className="text-resq-muted mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-resq-text mb-2">Map Unavailable</h2>
-          <p className="text-resq-muted text-sm">
-            Unable to load Google Maps. Please check your API key in the .env file.
-          </p>
-        </div>
-      </div>
-    );
-  }
+function MapEvents({ onMapClick }) {
+  useMapEvents({
+    click(e) {
+      onMapClick({
+        lat: e.latlng.lat,
+        lng: e.latlng.lng,
+      });
+    },
+  });
+  return null;
+}
 
-  if (!isLoaded) {
-    return (
-      <div className="h-full w-full flex items-center justify-center bg-resq-dark">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-12 h-12 rounded-full border-3 border-resq-border border-t-resq-accent animate-spin" />
-          <p className="text-resq-muted text-sm">Loading map...</p>
-        </div>
-      </div>
-    );
-  }
+export default function Map({ zones, userLocation, onMapClick, userId }) {
+  const center = useMemo(() => userLocation || { lat: 19.076, lng: 72.8777 }, [userLocation]);
+  const [confirming, setConfirming] = useState(null);
+
+
+  const handleConfirm = async (zoneId) => {
+    if (!userId || confirming === zoneId) return;
+    
+    setConfirming(zoneId);
+    try {
+      const zoneRef = doc(db, 'zones', zoneId);
+      await updateDoc(zoneRef, {
+        confirmations: arrayUnion(userId)
+      });
+    } catch (error) {
+      console.error('Confirmation failed:', error);
+    } finally {
+      setConfirming(null);
+    }
+  };
 
   return (
-    <div className="absolute inset-0">
-      <GoogleMap
-        mapContainerStyle={mapContainerStyle}
-        center={center}
+    <div className="absolute inset-0 z-0">
+      <MapContainer
+        center={[center.lat, center.lng]}
         zoom={13}
-        options={options}
-        onLoad={onLoad}
-        onClick={handleMapClick}
+        style={{ height: '100%', width: '100%' }}
+        zoomControl={false}
+        attributionControl={false}
       >
+        {/* Google Maps Stable Tiles (API-less) with CSS Dark Filter */}
+        <TileLayer
+          url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+          className="map-tiles-dark"
+          maxZoom={20}
+          attribution='&copy; Google'
+        />
+
+        <MapController center={userLocation} />
+        <MapEvents onMapClick={onMapClick} />
+
         {/* User location marker */}
         {userLocation && (
-          <Marker
-            position={userLocation}
-            icon={{
-              path: 0, // google.maps.SymbolPath.CIRCLE
-              scale: 8,
-              fillColor: '#3b82f6',
-              fillOpacity: 1,
-              strokeColor: '#ffffff',
-              strokeWeight: 3,
-            }}
-            title="Your location"
-            zIndex={1000}
-          />
+          <Marker position={[userLocation.lat, userLocation.lng]} icon={userLocationIcon}>
+            <Popup>
+              <div className="p-1 font-semibold">Your Location</div>
+            </Popup>
+          </Marker>
         )}
 
         {/* Zone markers */}
-        {zones.map((zone) => (
-          <Marker
-            key={zone.id}
-            position={{ lat: zone.lat, lng: zone.lng }}
-            icon={{
-              url: markerIcons[zone.type] || markerIcons.hazard,
-              scaledSize: new window.google.maps.Size(36, 44),
-              anchor: new window.google.maps.Point(18, 44),
-            }}
-            onClick={() => setSelectedZone(zone)}
-            animation={zone.type === 'danger' ? 1 : undefined} // BOUNCE for danger
-          />
-        ))}
+        {zones.map((zone) => {
+          const confirmations = zone.confirmations?.length || 0;
+          const isVerified = confirmations >= 3 || zone.type === 'safe' || zone.type === 'danger';
+          const hasAlreadyConfirmed = zone.confirmations?.includes(userId);
 
-        {/* Info Window */}
-        {selectedZone && (
-          <InfoWindow
-            position={{ lat: selectedZone.lat, lng: selectedZone.lng }}
-            onCloseClick={() => setSelectedZone(null)}
-            options={{ pixelOffset: new window.google.maps.Size(0, -44) }}
-          >
-            <div className="p-2 min-w-[200px]" style={{ background: '#1a2233', color: '#e2e8f0' }}>
-              {(() => {
-                const typeInfo = typeLabels[selectedZone.type] || typeLabels.hazard;
-                const Icon = typeInfo.icon;
-                return (
-                  <>
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className={`p-1.5 rounded-lg ${typeInfo.bg}`}>
-                        <Icon size={14} className={typeInfo.color} />
-                      </div>
-                      <span className={`text-xs font-semibold uppercase tracking-wide ${typeInfo.color}`}>
-                        {typeInfo.label}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-300 leading-relaxed">{selectedZone.description}</p>
-                    <p className="text-[10px] text-gray-500 mt-2">{getTimeAgo(selectedZone.timestamp)}</p>
-                  </>
-                );
-              })()}
-            </div>
-          </InfoWindow>
-        )}
-      </GoogleMap>
+          return (
+            <Marker
+              key={zone.id}
+              position={[zone.lat, zone.lng]}
+              icon={markerIcons[zone.type](isVerified) || markerIcons.hazard(isVerified)}
+            >
+              <Popup>
+                <div className="p-2 min-w-[200px]" style={{ color: '#1a2233' }}>
+                  {(() => {
+                    const typeInfo = typeLabels[zone.type] || typeLabels.hazard;
+                    const Icon = typeInfo.icon;
+                    return (
+                      <>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-lg ${typeInfo.bg}`}>
+                              <Icon size={14} className={typeInfo.color} />
+                            </div>
+                            <span className={`text-xs font-semibold uppercase tracking-wide ${typeInfo.color}`}>
+                              {typeInfo.label}
+                            </span>
+                          </div>
+                          {isVerified && (
+                            <div className="flex items-center gap-1 text-[10px] text-green-600 font-bold bg-green-50 px-1.5 py-0.5 rounded border border-green-200">
+                              <CheckCircle2 size={10} />
+                              VERIFIED
+                            </div>
+                          )}
+                        </div>
+                        
+                        <p className="text-sm text-gray-700 leading-relaxed mb-3">{zone.description}</p>
+                        
+                        <div className="flex items-center justify-between pt-2 border-t border-gray-100 mt-2">
+                          <div className="text-[10px] text-gray-400">
+                            {getTimeAgo(zone.timestamp)}
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="mt-5 flex gap-2">
+                          <button 
+                            onClick={() => handleConfirm(zone.id)}
+                            disabled={hasAlreadyConfirmed || confirming === zone.id}
+                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 ${
+                              hasAlreadyConfirmed
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-resq-accent hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                            }`}
+                          >
+                            {confirming === zone.id ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <>
+                                <ShieldCheck size={14} />
+                                {hasAlreadyConfirmed ? 'Verified' : 'Confirm'}
+                              </>
+                            )}
+                          </button>
+                          <button 
+                            onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${zone.lat},${zone.lng}`, '_blank')}
+                            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-resq-card hover:bg-resq-border/40 text-resq-text font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 border border-resq-border/30"
+                          >
+                            <Navigation size={14} className="text-resq-accent" />
+                            Route
+                          </button>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
+      </MapContainer>
 
       {/* Map Legend */}
-      <div className="absolute bottom-24 right-4 z-20">
+      <div className="absolute bottom-24 right-4 z-[1000]">
         <div className="glass-card p-3 space-y-2">
           <p className="text-[10px] uppercase tracking-widest text-resq-muted font-semibold mb-1">Legend</p>
           <div className="flex items-center gap-2">
@@ -231,6 +251,12 @@ export default function Map({ zones, userLocation, onMapClick }) {
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-blue-500 shadow-sm shadow-blue-500/50" />
             <span className="text-xs text-resq-muted">You</span>
+          </div>
+          <div className="pt-2 border-t border-resq-border/30 mt-1">
+            <div className="flex items-center gap-2 opacity-50">
+              <div className="w-3 h-3 rounded-full bg-gray-400" />
+              <span className="text-[10px] text-resq-muted">Unverified (Requires 3 reports)</span>
+            </div>
           </div>
         </div>
       </div>

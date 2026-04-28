@@ -28,6 +28,16 @@ export default function Navbar({ alertCount, onToggleAlerts, onToggleChat, showA
 
         {/* Action buttons */}
         <div className="flex items-center gap-2">
+          {/* SOS Button */}
+          <button
+            onClick={() => window.open('tel:112')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-red-500/30"
+          >
+            <Shield size={14} className="animate-pulse" />
+            SOS
+          </button>
+
+          <div className="w-[1px] h-8 bg-resq-border/30 mx-1 hidden sm:block" />
           {/* Alerts toggle */}
           <button
             onClick={onToggleAlerts}
