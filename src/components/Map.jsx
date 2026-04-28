@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle } from 're
 import L from 'leaflet';
 import { db } from '../firebase';
 import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
-import { MapPin, AlertTriangle, ShieldCheck, AlertCircle, CheckCircle2, Navigation2, ExternalLink } from 'lucide-react';
+import { MapPin, AlertTriangle, ShieldCheck, AlertCircle, CheckCircle2, Navigation2, ExternalLink, Sparkles } from 'lucide-react';
 
 // Fix for default marker icons in Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -60,6 +60,20 @@ const userLocationIcon = L.divIcon({
   iconAnchor: [24, 24],
 });
 
+const detectedLocationIcon = L.divIcon({
+  html: `
+    <div class="relative flex items-center justify-center">
+      <div class="absolute w-16 h-16 rounded-full bg-purple-500/20 animate-ping"></div>
+      <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-[0_0_20px_rgba(139,92,246,0.5)] border-2 border-white/50 z-10 animate-bounce">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+      </div>
+    </div>
+  `,
+  className: 'detected-location-icon',
+  iconSize: [64, 64],
+  iconAnchor: [32, 32],
+});
+
 const typeLabels = {
   danger: { label: 'Danger Zone', icon: AlertTriangle, color: 'text-red-400', bg: 'bg-red-500/15' },
   safe: { label: 'Safe Zone', icon: ShieldCheck, color: 'text-green-400', bg: 'bg-green-500/15' },
@@ -101,8 +115,9 @@ function MapEvents({ onMapClick }) {
   return null;
 }
 
-export default function Map({ zones, userLocation, onMapClick, userId }) {
-  const center = useMemo(() => userLocation || { lat: 18.5204, lng: 73.8567 }, [userLocation]);
+export default function Map({ zones, userLocation, mapCenter, detectedLocation, onMapClick, userId }) {
+  const [disasterFilter, setDisasterFilter] = useState('all');
+  const center = useMemo(() => mapCenter || userLocation || { lat: 18.5204, lng: 73.8567 }, [mapCenter, userLocation]);
   const [confirming, setConfirming] = useState(null);
 
 
@@ -139,7 +154,41 @@ export default function Map({ zones, userLocation, onMapClick, userId }) {
           attribution='&copy; Google'
         />
 
-        <MapController center={userLocation} />
+        {/* Filter Bar (Inside Map for better performance & persistence) */}
+        <div className="absolute top-24 left-0 right-0 z-[1000] w-full px-4 flex justify-center pointer-events-none">
+          <div className="glass-card p-1.5 flex gap-2 shadow-[0_12px_40px_rgba(0,0,0,0.5)] border-white/10 overflow-x-auto no-scrollbar max-w-full pointer-events-auto">
+            {[
+              { id: 'all', label: 'ALL HAZARDS', icon: AlertTriangle },
+              { id: 'flood', label: 'FLOOD', icon: Navigation2 },
+              { id: 'earthquake', label: 'EARTHQUAKE', icon: AlertTriangle },
+              { id: 'fire', label: 'FIRE', icon: AlertCircle },
+              { id: 'manmade', label: 'TECH/MAN-MADE', icon: AlertTriangle },
+              { id: 'biological', label: 'BIOLOGICAL', icon: ShieldCheck },
+              { id: 'security', label: 'SECURITY', icon: ShieldCheck },
+              { id: 'transport', label: 'TRANSPORT', icon: Navigation2 },
+              { id: 'weather', label: 'WEATHER', icon: Sparkles },
+            ].map((filter) => {
+              const Icon = filter.icon;
+              const isActive = disasterFilter === filter.id;
+              return (
+                <button
+                  key={filter.id}
+                  onClick={() => setDisasterFilter(filter.id)}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 shrink-0 ${
+                    isActive 
+                      ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] scale-105 border border-blue-400/50' 
+                      : 'bg-resq-dark/60 text-resq-muted hover:bg-resq-card hover:text-resq-text border border-resq-border/20'
+                  }`}
+                >
+                  <Icon size={14} className={isActive ? 'text-white' : 'text-blue-400/70'} />
+                  {filter.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <MapController center={center} />
         <MapEvents onMapClick={onMapClick} />
 
         {/* User location marker with accuracy circle */}
@@ -171,8 +220,29 @@ export default function Map({ zones, userLocation, onMapClick, userId }) {
           </>
         )}
 
-        {/* Zone markers */}
-        {zones.map((zone) => {
+        {/* AI Detected Location Marker */}
+        {detectedLocation && (
+          <Marker 
+            position={[detectedLocation.lat, detectedLocation.lng]} 
+            icon={detectedLocationIcon}
+            zIndexOffset={1100}
+          >
+            <Popup className="ai-popup">
+              <div className="p-2 text-center">
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <Sparkles size={14} className="text-purple-500" />
+                  <p className="text-xs font-black text-purple-600 uppercase tracking-widest">AI Identified</p>
+                </div>
+                <p className="text-[10px] text-resq-muted leading-tight font-medium">Map focused on chat location</p>
+              </div>
+            </Popup>
+          </Marker>
+        )}
+
+        {/* Zone markers (Filtered) */}
+        {zones
+          .filter(z => disasterFilter === 'all' || z.hazardType === 'all' || z.hazardType === disasterFilter)
+          .map((zone) => {
           const confirmations = zone.confirmations?.length || 0;
           const isVerified = confirmations >= 3 || zone.type === 'safe' || zone.type === 'danger';
           const hasAlreadyConfirmed = zone.confirmations?.includes(userId);

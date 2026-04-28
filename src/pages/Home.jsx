@@ -17,6 +17,8 @@ export default function Home({ user }) {
   const [showReport, setShowReport] = useState(false);
   const [reportCoords, setReportCoords] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
+  const [mapCenter, setMapCenter] = useState({ lat: 18.5204, lng: 73.8567 });
+  const [detectedLocation, setDetectedLocation] = useState(null);
   const [locationError, setLocationError] = useState(null);
   const [locationStatus, setLocationStatus] = useState('fetching'); // 'fetching' | 'success' | 'error'
   const [showLocationBanner, setShowLocationBanner] = useState(true);
@@ -40,10 +42,15 @@ export default function Home({ user }) {
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
-        setUserLocation({
+        const newLoc = {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-        });
+        };
+        setUserLocation(newLoc);
+        // Only auto-center map if no detected location is active
+        if (!detectedLocation) {
+          setMapCenter(newLoc);
+        }
         setLocationStatus('success');
         setLocationError(null);
         setShowLocationBanner(true);
@@ -85,43 +92,36 @@ export default function Home({ user }) {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       // ── PUNE SAFE ZONES: Hospitals, Police HQs, Colleges ───────────────
       const puneStaticZones = [
-        // === HOSPITALS ===
-        { id: 'safe-sassoon',      type: 'safe', lat: 18.5196, lng: 73.8553, description: '🏥 SAFE ZONE: Sassoon General Hospital — Government hospital, 24/7 emergency, trauma centre.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-kem',          type: 'safe', lat: 18.5270, lng: 73.8628, description: '🏥 SAFE ZONE: KEM Hospital Pune — Large public hospital, emergency ward active.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-ruby',         type: 'safe', lat: 18.5287, lng: 73.8773, description: '🏥 SAFE ZONE: Ruby Hall Clinic — Multi-specialty private hospital, 24/7 ICU.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-jehangir',     type: 'safe', lat: 18.5318, lng: 73.8743, description: '🏥 SAFE ZONE: Jehangir Hospital — Tertiary care hospital, emergency services.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-deenanath',    type: 'safe', lat: 18.4931, lng: 73.8076, description: '🏥 SAFE ZONE: Deenanath Mangeshkar Hospital — 900-bed hospital, trauma & critical care.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-bharati',      type: 'safe', lat: 18.4647, lng: 73.8633, description: '🏥 SAFE ZONE: Bharati Vidyapeeth Hospital & Research Centre — Medical college hospital.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-afmc',         type: 'safe', lat: 18.5427, lng: 73.8780, description: '🏥 SAFE ZONE: AFMC Military Hospital — Armed Forces Medical College, secured campus.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-poona-hosp',   type: 'safe', lat: 18.5135, lng: 73.8626, description: '🏥 SAFE ZONE: Poona Hospital & Research Centre — Emergency & surgical care, 24/7.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-aundh-hosp',   type: 'safe', lat: 18.5598, lng: 73.8120, description: '🏥 SAFE ZONE: Aundh District Hospital — Government district hospital, emergency ward.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-noble',        type: 'safe', lat: 18.5467, lng: 73.9210, description: '🏥 SAFE ZONE: Noble Hospital, Hadapsar — Multi-specialty, 24/7 emergency.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        // === HOSPITALS (Safe for All) ===
+        { id: 'safe-sassoon',      type: 'safe', hazardType: 'all', lat: 18.5196, lng: 73.8553, description: '🏥 SAFE ZONE: Sassoon General Hospital — Government hospital, 24/7 emergency, trauma centre.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-kem',          type: 'safe', hazardType: 'all', lat: 18.5270, lng: 73.8628, description: '🏥 SAFE ZONE: KEM Hospital Pune — Large public hospital, emergency ward active.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-ruby',         type: 'safe', hazardType: 'all', lat: 18.5287, lng: 73.8773, description: '🏥 SAFE ZONE: Ruby Hall Clinic — Multi-specialty private hospital, 24/7 ICU.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-jehangir',     type: 'safe', hazardType: 'all', lat: 18.5318, lng: 73.8743, description: '🏥 SAFE ZONE: Jehangir Hospital — Tertiary care hospital, emergency services.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-deenanath',    type: 'safe', hazardType: 'all', lat: 18.4931, lng: 73.8076, description: '🏥 SAFE ZONE: Deenanath Mangeshkar Hospital — 900-bed hospital, trauma & critical care.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-bharati',      type: 'safe', hazardType: 'all', lat: 18.4647, lng: 73.8633, description: '🏥 SAFE ZONE: Bharati Vidyapeeth Hospital & Research Centre — Medical college hospital.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-afmc',         type: 'safe', hazardType: 'all', lat: 18.5427, lng: 73.8780, description: '🏥 SAFE ZONE: AFMC Military Hospital — Armed Forces Medical College, secured campus.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-poona-hosp',   type: 'safe', hazardType: 'all', lat: 18.5135, lng: 73.8626, description: '🏥 SAFE ZONE: Poona Hospital & Research Centre — Emergency & surgical care, 24/7.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-aundh-hosp',   type: 'safe', hazardType: 'all', lat: 18.5598, lng: 73.8120, description: '🏥 SAFE ZONE: Aundh District Hospital — Government district hospital, emergency ward.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-noble',        type: 'safe', hazardType: 'all', lat: 18.5467, lng: 73.9210, description: '🏥 SAFE ZONE: Noble Hospital, Hadapsar — Multi-specialty, 24/7 emergency.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
 
         // === POLICE HEADQUARTERS ===
-        { id: 'safe-police-comm',  type: 'safe', lat: 18.5204, lng: 73.8567, description: '🚔 SAFE ZONE: Pune Police Commissioner HQ — Central police headquarters, armed deployment.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-police-rural', type: 'safe', lat: 18.5073, lng: 73.8022, description: '🚔 SAFE ZONE: Pune Rural Superintendent of Police Office — SP Office, emergency response.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-police-pim',   type: 'safe', lat: 18.6071, lng: 73.8178, description: '🚔 SAFE ZONE: Pimpri-Chinchwad Police HQ (PCMC) — Twin city police command centre.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-police-comm',  type: 'safe', hazardType: 'all', lat: 18.5204, lng: 73.8567, description: '🚔 SAFE ZONE: Pune Police Commissioner HQ — Central police headquarters, armed deployment.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-police-rural', type: 'safe', hazardType: 'all', lat: 18.5073, lng: 73.8022, description: '🚔 SAFE ZONE: Pune Rural Superintendent of Police Office — SP Office, emergency response.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-police-pim',   type: 'safe', hazardType: 'all', lat: 18.6071, lng: 73.8178, description: '🚔 SAFE ZONE: Pimpri-Chinchwad Police HQ (PCMC) — Twin city police command centre.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
 
-        // === SCHOOLS & COLLEGES ===
-        { id: 'safe-fergusson',    type: 'safe', lat: 18.5203, lng: 73.8407, description: '🏫 SAFE ZONE: Fergusson College — Large open campus, designated civic shelter.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-sppu',         type: 'safe', lat: 18.5576, lng: 73.8169, description: '🏫 SAFE ZONE: Savitribai Phule Pune University (SPPU) — Vast campus, disaster shelter facility.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-coep',         type: 'safe', lat: 18.5301, lng: 73.8511, description: '🏫 SAFE ZONE: College of Engineering Pune (COEP) — Old campus, strong structure, shelter.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-mit',          type: 'safe', lat: 18.4574, lng: 73.8421, description: '🏫 SAFE ZONE: MIT College of Engineering, Kothrud — Large campus, emergency assembly point.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-symbiosis',    type: 'safe', lat: 18.5249, lng: 73.8116, description: '🏫 SAFE ZONE: Symbiosis International University — Secure campus, medical centre on site.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-army-inst',    type: 'safe', lat: 18.5597, lng: 73.8943, description: '🏫 SAFE ZONE: Army Institute of Technology, Dighi — Secured army campus, shelter available.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
-        { id: 'safe-wadia',        type: 'safe', lat: 18.5267, lng: 73.8648, description: '🏫 SAFE ZONE: Wadia College — Century-old campus, flood shelter registered.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        // === SCHOOLS & COLLEGES (Flood Safe - High Structures) ===
+        { id: 'safe-fergusson',    type: 'safe', hazardType: 'flood', lat: 18.5203, lng: 73.8407, description: '🏫 FLOOD SAFE: Fergusson College — Designated high-ground civic shelter.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-sppu',         type: 'safe', hazardType: 'all', lat: 18.5576, lng: 73.8169, description: '🏫 SAFE ZONE: SPPU — Large open campus (Earthquake Safe) & High structures (Flood Safe).', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-coep',         type: 'safe', hazardType: 'flood', lat: 18.5301, lng: 73.8511, description: '🏫 FLOOD SAFE: COEP — Sturdy multi-story structures for flood assembly.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-mit',          type: 'safe', hazardType: 'earthquake', lat: 18.4574, lng: 73.8421, description: '🏫 EARTHQUAKE SAFE: MIT Kothrud — Large open playground area for safe assembly.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-wadia',        type: 'safe', hazardType: 'flood', lat: 18.5267, lng: 73.8648, description: '🏫 FLOOD SAFE: Wadia College — Registered flood shelter with high-floor access.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
 
-        // ── PUNE DANGER ZONES: Flood-prone & Hazardous Areas ───────────────
-        { id: 'danger-mutha-khadak',   type: 'danger', lat: 18.4527, lng: 73.7711, description: '🚨 DANGER: Mutha River flood zone near Khadakwasla Dam — Extreme flood risk during heavy rain. Evacuate immediately.', timestamp: Date.now() - 1800000, confirmations: ['d1','d2','d3','d4'] },
-        { id: 'danger-panshet',        type: 'danger', lat: 18.3563, lng: 73.6954, description: '🚨 DANGER: Panshet Dam downstream area — High flood risk zone. Water release during heavy rainfall.', timestamp: Date.now() - 3600000, confirmations: ['d1','d2','d3'] },
-        { id: 'danger-sangam',         type: 'danger', lat: 18.5133, lng: 73.8357, description: '🚨 DANGER: Mula-Mutha River Sangam (Confluence) — Severe flooding risk. River banks breach here first.', timestamp: Date.now() - 900000, confirmations: ['d1','d2','d3','d4','d5'] },
-        { id: 'danger-vishrantwadi',   type: 'danger', lat: 18.5893, lng: 73.9046, description: '🚨 DANGER: Vishrantwadi low-lying flood zone — Water accumulates rapidly during heavy rain.', timestamp: Date.now() - 2700000, confirmations: ['d1','d2','d3'] },
-        { id: 'danger-sinhagad-rd',    type: 'danger', lat: 18.4632, lng: 73.7924, description: '🚨 DANGER: Sinhagad Road depression area — Flash flood & landslide risk from Sinhagad hills.', timestamp: Date.now() - 5400000, confirmations: ['d1','d2','d3'] },
-        { id: 'danger-hadapsar-ind',   type: 'danger', lat: 18.4966, lng: 73.9363, description: '🚨 DANGER: Hadapsar Industrial Zone — Chemical plant hazard, toxic gas risk during accidents.', timestamp: Date.now() - 7200000, confirmations: ['d1','d2','d3'] },
-        { id: 'danger-ambil-odha',     type: 'danger', lat: 18.4851, lng: 73.8443, description: '🚨 DANGER: Ambil Odha flood channel — Rapid overflow during monsoon. Stay away from banks.', timestamp: Date.now() - 1200000, confirmations: ['d1','d2','d3','d4'] },
-        { id: 'danger-kondhwa-low',    type: 'danger', lat: 18.4609, lng: 73.8819, description: '🚨 DANGER: Kondhwa low-lying pocket — Chronic waterlogging and flooding in monsoon season.', timestamp: Date.now() - 4500000, confirmations: ['d1','d2','d3'] },
-        { id: 'danger-bhosari-ind',    type: 'danger', lat: 18.6319, lng: 73.8497, description: '🚨 DANGER: Bhosari MIDC Industrial Area — Heavy machinery accident zone, chemical storage nearby.', timestamp: Date.now() - 6300000, confirmations: ['d1','d2','d3'] },
-        { id: 'danger-katraj-ghat',    type: 'danger', lat: 18.4327, lng: 73.8643, description: '🚨 DANGER: Katraj Ghat & Bypass — Landslide-prone road. Avoid during heavy rainfall.', timestamp: Date.now() - 3000000, confirmations: ['d1','d2','d3'] },
+        // ── PUNE DANGER ZONES ───────────────
+        { id: 'danger-mutha-khadak',   type: 'danger', hazardType: 'flood', lat: 18.4527, lng: 73.7711, description: '🚨 FLOOD DANGER: Mutha River near Dam — Extreme water levels during discharge.', timestamp: Date.now() - 1800000, confirmations: ['d1','d2','d3','d4'] },
+        { id: 'danger-sangam',         type: 'danger', hazardType: 'flood', lat: 18.5133, lng: 73.8357, description: '🚨 FLOOD DANGER: Mula-Mutha Sangam — River banks breach here first.', timestamp: Date.now() - 900000, confirmations: ['d1','d2','d3','d4','d5'] },
+        { id: 'danger-vishrantwadi',   type: 'danger', hazardType: 'flood', lat: 18.5893, lng: 73.9046, description: '🚨 FLOOD DANGER: Low-lying pocket — Chronic waterlogging zone.', timestamp: Date.now() - 2700000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-katraj-ghat',    type: 'danger', hazardType: 'earthquake', lat: 18.4327, lng: 73.8643, description: '🚨 EARTHQUAKE DANGER: Katraj Ghat — High risk of rockfall/landslides during seismic activity.', timestamp: Date.now() - 3000000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-narrow-peth',    type: 'danger', hazardType: 'earthquake', lat: 18.5162, lng: 73.8544, description: '🚨 EARTHQUAKE DANGER: Narrow Peth Alleys — High density old structures, risk of collapse.', timestamp: Date.now() - 1000000, confirmations: ['d1'] },
       ];
 
       // Filter out any real Firestore data further than 50km (keep all Pune data)
@@ -284,6 +284,8 @@ export default function Home({ user }) {
       <Map
         zones={zones}
         userLocation={userLocation}
+        mapCenter={mapCenter}
+        detectedLocation={detectedLocation}
         onMapClick={handleMapClick}
         userId={user?.uid}
       />
@@ -304,6 +306,12 @@ export default function Home({ user }) {
         onClose={() => setShowChat(false)}
         zones={zones}
         alerts={alerts}
+        onLocationDetected={(loc) => {
+          setMapCenter(loc);
+          setDetectedLocation(loc);
+          // Auto-clear detected marker after 15 seconds
+          setTimeout(() => setDetectedLocation(null), 15000);
+        }}
       />
 
       {/* Report Hazard Modal */}

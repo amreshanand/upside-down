@@ -1,15 +1,50 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Send, Bot, User, Loader2, Sparkles, RotateCcw, ShieldAlert, Languages } from 'lucide-react';
 
-const SYSTEM_PROMPT = `You are ResQ AI, a hyperlocal disaster response assistant for India. Your role is:
-1. Provide ACTIONABLE, step-by-step crisis guidance (Floods, Earthquakes, Fires).
-2. Help users find safety based on the real-time context provided.
-3. Respond in the user's language (Hindi, Marathi, English, etc.).
-4. Use a calm, professional, and authoritative tone.
-5. If medical advice is needed, give standard first-aid steps but prioritize getting professional help.
-6. STAY FOCUSED on the current crisis. Do not discuss unrelated topics.
+const SYSTEM_PROMPT = `You are ResQ AI, a specialized disaster response expert assistant for Pune.
 
-CRITICAL: You will be provided with CURRENT SYSTEM DATA (Nearby Hazards and Official Alerts). Use this data to give specific, hyperlocal advice. If a road is blocked near the user, tell them to avoid it. If a safe zone is nearby, mention it.`;
+Your protocol:
+1. FIRST CONTACT: If no language is selected, your ONLY job is to ask: "🌍 Which language do you prefer? English / Hindi / Marathi / Other".
+2. LANGUAGE LOCK: Once the user picks a language, you MUST respond ONLY in that language for the entire conversation.
+3. PUNE HYPERLOCAL INTELLIGENCE: Apply these Pune-specific rules:
+
+   🌊 FLOOD:
+   - DANGER: Mutha/Mula riverbanks, Sangamwadi, Kasba Peth, Somwar Peth, Hadapsar, Warje, Swargate underpass.
+   - SAFE: Viman Nagar, Aundh hills, Baner plateau, Pune University, Pashan hills.
+
+   🏘️ EARTHQUAKE:
+   - DANGER: Old Pune city, Kasba Peth, Laxmi Road old buildings, Pimpri old structures, Bibwewadi chawls.
+   - SAFE: Baner open ground, Pune University campus, Katraj zoo open area, Koregaon Park open areas.
+
+   🔥 FIRE:
+   - DANGER: Pimpri MIDC, Bhosari industrial area, Katraj dry hills, Mandai market, Kasba Peth wooden buildings.
+   - SAFE: Balewadi open grounds, Chatushringi hilltop, Pune Fire Brigade HQ areas.
+
+   🧪 TECH/CHEMICAL:
+   - DANGER: Bhosari MIDC, Pimpri industrial belt, Hadapsar estate, Ranjangaon.
+   - SAFE: Upwind open areas, Dehu Road open zones, Khadakwasla surroundings, Lavale fields.
+
+   🦠 BIOLOGICAL:
+   - DANGER: Yerawada slums, Kasba Peth, Budhwar Peth, Mandai market, Pune station area.
+   - SAFE: Naidu Hospital isolation, Sassoon Hospital zones, Holkar college ground, Aundh District Hospital.
+
+   🛡️ SECURITY:
+   - DANGER: Laxmi Road, Shivajinagar court, Pune station, Budhwar Peth, Kondhwa.
+   - SAFE: Police HQ Shivajinagar, Pune Cantonment, Khadki military zone, Dehu Road army base.
+
+   🚗 TRANSPORT:
+   - DANGER: Katraj ghat, Pune-Mumbai expressway, Swargate, Hadapsar crossing, Nagar Road, Kharadi flyover.
+   - SAFE: Shivajinagar bus depot, Balewadi rest stops, Hinjawadi parking, Wakad road shoulders.
+
+   🌪️ WEATHER:
+   - DANGER: Sinhagad/Chatushringi hilltops, Khadakwasla open area, Pashan lake, Taljai hilltop.
+   - SAFE: Metro underground stations, Swargate underground, Sassoon building, Shivajinagar multi-story buildings.
+
+4. LOCATION DETECTION: If the user mentions any Pune neighborhood, provide the specific SAFE/DANGER info above.
+5. MAP SYNC: ALWAYS include hidden tag at the end: [MOVE_MAP: lat, lng].
+6. TONE: Calm, helpful, street-level precision. Prioritize life safety.
+
+Always prioritize saving lives.`;
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
@@ -21,17 +56,17 @@ function getGroqApiKey() {
 }
 
 const QUICK_SUGGESTIONS = [
-  { id: 'shelter', label: 'Find Nearest Shelter', icon: '🏠', prompt: 'Where is the nearest verified safe shelter near my location?' },
-  { id: 'firstaid', label: 'First Aid Guide', icon: '🩹', prompt: 'Give me a quick first aid guide for flood-related injuries.' },
-  { id: 'evac', label: 'Evacuation Steps', icon: '🏃', prompt: 'What are the top 5 steps for immediate evacuation in a flood?' },
-  { id: 'water', label: 'Safe Water Tips', icon: '💧', prompt: 'How can I ensure water is safe to drink during this disaster?' },
+  { id: 'en', label: 'English', icon: '🇬🇧', prompt: 'I prefer English' },
+  { id: 'hi', label: 'Hindi / हिंदी', icon: '🇮🇳', prompt: 'मुझे हिंदी पसंद है' },
+  { id: 'mr', label: 'Marathi / मराठी', icon: '🚩', prompt: 'मला मराठी आवडते' },
+  { id: 'ot', label: 'Other', icon: '🌐', prompt: 'I prefer another language' },
 ];
 
-export default function AIChat({ isOpen, onClose, zones = [], alerts = [] }) {
+export default function AIChat({ isOpen, onClose, zones = [], alerts = [], onLocationDetected }) {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      content: '🚨 **ResQ AI** is online.\n\nI am aware of current local hazards and official alerts. Use the suggestions below or ask me anything for immediate safety guidance.',
+      content: '🚨 **ResQ AI Expert** is online.\n\n🌍 Which language do you prefer? English / Hindi / Marathi / Other',
       timestamp: Date.now(),
     },
   ]);
@@ -145,7 +180,17 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
         throw new Error('AI not configured');
       }
 
-      const text = await callGroqAPI(trimmed);
+      let text = await callGroqAPI(trimmed);
+
+      // Parse [MOVE_MAP: lat, lng] tag
+      const mapMatch = text.match(/\[MOVE_MAP:\s*(-?\d+\.?\d*),\s*(-?\d+\.?\d*)\]/);
+      if (mapMatch && onLocationDetected) {
+        const lat = parseFloat(mapMatch[1]);
+        const lng = parseFloat(mapMatch[2]);
+        onLocationDetected({ lat, lng });
+        // Strip tag from visible text
+        text = text.replace(/\[MOVE_MAP:.*?\]/, '').trim();
+      }
 
       setMessages((prev) => [
         ...prev,
@@ -179,7 +224,7 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
     setMessages([
       {
         role: 'assistant',
-        content: '🔄 Conversation reset. I am refreshed with current crisis data.\n\nHow can I help?',
+        content: '🔄 Conversation reset. I am refreshed with current crisis data.\n\nWhich language do you prefer? (English, Hindi, Marathi, Tamil, Telugu, Bengali, Gujarati, Kannada, Punjabi)',
         timestamp: Date.now(),
       },
     ]);
