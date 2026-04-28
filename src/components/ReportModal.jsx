@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
-import { X, AlertTriangle, MapPin, Send, Loader2, CheckCircle, ShieldAlert, Info } from 'lucide-react';
+import { X, AlertTriangle, MapPin, Send, Loader2, CheckCircle, ShieldAlert, Info, Search } from 'lucide-react';
 
 const hazardTypes = [
   { value: 'Flooded Road', emoji: '🌊', color: 'text-blue-400' },
@@ -21,33 +21,87 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
   const [severity, setSeverity] = useState('medium');
   const [description, setDescription] = useState('');
   const [locationName, setLocationName] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  // Fetch live location suggestions from real-time places API (Photon/OSM)
+  useEffect(() => {
+    if (locationName.length < 2 || !isOpen) {
+      if (locationName.length === 0 && isOpen) {
+        setSuggestions(['Popular: Shaniwar Wada', 'Popular: Pune Station', 'Popular: Phoenix Marketcity', 'Popular: FC Road']);
+      } else {
+        setSuggestions([]);
+      }
+      return;
+    }
+
+    const fetchSuggestions = async () => {
+      try {
+        // We use the Photon API (OSM-based) because it's fast, free, and handles cafes/landmarks perfectly
+        // We bias results toward Pune coordinates (18.5204, 73.8567)
+        const response = await fetch(
+          `https://photon.komoot.io/api/?q=${encodeURIComponent(locationName)}&lat=18.5204&lon=73.8567&limit=10`
+        );
+        const data = await response.json();
+        
+        const formatted = data.features.map(f => {
+          const p = f.properties;
+          const name = p.name || '';
+          const city = p.city ? `, ${p.city}` : '';
+          const district = p.district ? ` (${p.district})` : '';
+          return `${name}${district}${city}`;
+        }).filter(name => name.length > 0);
+
+        setSuggestions([...new Set(formatted)]);
+        setShowSuggestions(true);
+      } catch (err) {
+        console.error('Places Search error:', err);
+      }
+    };
+
+    const debounce = setTimeout(fetchSuggestions, 200);
+    return () => clearTimeout(debounce);
+  }, [locationName, isOpen]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!hazardType || !coords) return;
+    if (!hazardType || !locationName.trim() || !coords) return;
 
     setSubmitting(true);
+    const reportDesc = `${hazardType}${locationName ? ' @ ' + locationName : ''}${description ? ': ' + description : ''}`;
+    
     try {
+      // 1. Save to Zones (for map markers)
       await addDoc(collection(db, 'zones'), {
         type: 'hazard',
         lat: coords.lat,
         lng: coords.lng,
-        description: `${hazardType}${locationName ? ' @ ' + locationName : ''}${description ? ': ' + description : ''}`,
+        description: reportDesc,
         severity: severity,
         timestamp: Date.now(),
         reportedBy: userId || 'anonymous',
-        confirmations: [userId || 'anonymous'], // Initial reporter counts as first confirmation
+        confirmations: [userId || 'anonymous'],
+      });
+
+      // 2. Save to Alerts (for Crisis Feed)
+      await addDoc(collection(db, 'alerts'), {
+        title: `USER REPORT: ${hazardType}`,
+        message: reportDesc,
+        severity: severity,
+        timestamp: Date.now(),
+        isOfficial: false,
+        source: 'Citizen Report',
+        location: locationName,
+        lat: coords.lat,
+        lng: coords.lng
       });
 
       setSubmitted(true);
       setTimeout(() => {
         setSubmitted(false);
-        setHazardType('');
-        setSeverity('medium');
-        setDescription('');
-        setLocationName('');
+        resetForm();
         onClose();
       }, 1500);
     } catch (error) {
@@ -58,13 +112,19 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
     }
   };
 
+  const resetForm = () => {
+    setHazardType('');
+    setSeverity('medium');
+    setDescription('');
+    setLocationName('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setSubmitted(false);
+  };
+
   const handleClose = () => {
     if (!submitting) {
-      setHazardType('');
-      setSeverity('medium');
-      setDescription('');
-      setLocationName('');
-      setSubmitted(false);
+      resetForm();
       onClose();
     }
   };
@@ -92,7 +152,7 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
                 <CheckCircle size={32} className="text-green-400" />
               </div>
               <h3 className="text-lg font-bold text-resq-text mb-1">Report Submitted!</h3>
-              <p className="text-sm text-resq-muted">Thank you for helping keep others safe.</p>
+              <p className="text-sm text-resq-muted">Thank you for helping keep others safe. Your report is now live in the Crisis Feed.</p>
             </div>
           ) : (
             <>
@@ -127,19 +187,45 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
 
               {/* Form */}
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Location Name Input */}
-                <div>
-                  <label className="block text-[10px] text-resq-muted font-black uppercase tracking-widest mb-1.5 px-1">
-                    Location Name / Landmark
+                {/* Location Name Input with Suggestions */}
+                <div className="relative">
+                  <label className="block text-[10px] text-resq-muted font-black uppercase tracking-widest mb-1.5 px-1 flex justify-between">
+                    <span>Location Name / Landmark</span>
+                    <span className="text-red-500 text-[9px]">* REQUIRED</span>
                   </label>
-                  <input
-                    type="text"
-                    value={locationName}
-                    onChange={(e) => setLocationName(e.target.value)}
-                    placeholder="e.g. Near Central Metro Station"
-                    className="input-field py-2 text-sm"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={locationName}
+                      onChange={(e) => setLocationName(e.target.value)}
+                      onFocus={() => setShowSuggestions(true)}
+                      placeholder="e.g. Near Shaniwar Wada"
+                      className="input-field py-2 text-sm pl-9"
+                      required
+                    />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-resq-muted" size={14} />
+                  </div>
+
+                  {/* Suggestions Dropdown */}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 z-50 mt-1 glass-panel border border-resq-border/40 overflow-hidden shadow-2xl">
+                      {suggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => {
+                            setLocationName(s);
+                            setShowSuggestions(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-xs text-resq-text hover:bg-resq-accent/20 transition-colors border-b border-resq-border/10 last:border-0"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
+
                 {/* Hazard type selection */}
                 <div>
                   <label className="block text-xs font-semibold text-resq-muted uppercase tracking-wider mb-2">
@@ -219,8 +305,8 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
                 {/* Submit */}
                 <button
                   type="submit"
-                  disabled={!hazardType || submitting}
-                  className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={!hazardType || !locationName.trim() || submitting}
+                  className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-xl shadow-blue-500/10"
                 >
                   {submitting ? (
                     <>
@@ -242,3 +328,4 @@ export default function ReportModal({ isOpen, onClose, coords, userId }) {
     </>
   );
 }
+

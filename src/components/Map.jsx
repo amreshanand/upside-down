@@ -1,9 +1,9 @@
 import { useCallback, useState, useMemo, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import { db } from '../firebase';
 import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
-import { MapPin, AlertTriangle, ShieldCheck, AlertCircle, ThumbsUp, CheckCircle2 } from 'lucide-react';
+import { MapPin, AlertTriangle, ShieldCheck, AlertCircle, CheckCircle2, Navigation2, ExternalLink } from 'lucide-react';
 
 // Fix for default marker icons in Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -50,13 +50,14 @@ const markerIcons = {
 const userLocationIcon = L.divIcon({
   html: `
     <div class="relative flex items-center justify-center">
-      <div class="absolute w-8 h-8 rounded-full bg-blue-500/30 animate-ping"></div>
-      <div class="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg z-10"></div>
+      <div class="absolute w-12 h-12 rounded-full bg-blue-500/20 animate-ping"></div>
+      <div class="absolute w-8 h-8 rounded-full bg-blue-500/40 animate-pulse"></div>
+      <div class="w-5 h-5 rounded-full bg-blue-600 border-2 border-white shadow-[0_0_15px_rgba(37,99,235,0.6)] z-10"></div>
     </div>
   `,
   className: 'user-location-icon',
-  iconSize: [32, 32],
-  iconAnchor: [16, 16],
+  iconSize: [48, 48],
+  iconAnchor: [24, 24],
 });
 
 const typeLabels = {
@@ -101,7 +102,7 @@ function MapEvents({ onMapClick }) {
 }
 
 export default function Map({ zones, userLocation, onMapClick, userId }) {
-  const center = useMemo(() => userLocation || { lat: 19.076, lng: 72.8777 }, [userLocation]);
+  const center = useMemo(() => userLocation || { lat: 18.5204, lng: 73.8567 }, [userLocation]);
   const [confirming, setConfirming] = useState(null);
 
 
@@ -141,13 +142,33 @@ export default function Map({ zones, userLocation, onMapClick, userId }) {
         <MapController center={userLocation} />
         <MapEvents onMapClick={onMapClick} />
 
-        {/* User location marker */}
+        {/* User location marker with accuracy circle */}
         {userLocation && (
-          <Marker position={[userLocation.lat, userLocation.lng]} icon={userLocationIcon}>
-            <Popup>
-              <div className="p-1 font-semibold">Your Location</div>
-            </Popup>
-          </Marker>
+          <>
+            <Circle
+              center={[userLocation.lat, userLocation.lng]}
+              radius={100}
+              pathOptions={{ 
+                fillColor: '#3b82f6', 
+                fillOpacity: 0.15, 
+                color: '#3b82f6', 
+                weight: 1,
+                dashArray: '5, 5'
+              }}
+            />
+            <Marker 
+              position={[userLocation.lat, userLocation.lng]} 
+              icon={userLocationIcon}
+              zIndexOffset={1000}
+            >
+              <Popup className="user-popup">
+                <div className="p-2 text-center">
+                  <p className="text-xs font-black text-blue-600 uppercase tracking-widest mb-1">You are here</p>
+                  <p className="text-[10px] text-resq-muted leading-tight">Live GPS tracking active</p>
+                </div>
+              </Popup>
+            </Marker>
+          </>
         )}
 
         {/* Zone markers */}
@@ -195,32 +216,70 @@ export default function Map({ zones, userLocation, onMapClick, userId }) {
                         </div>
 
                         {/* Action Buttons */}
-                        <div className="mt-5 flex gap-2">
-                          <button 
-                            onClick={() => handleConfirm(zone.id)}
-                            disabled={hasAlreadyConfirmed || confirming === zone.id}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 ${
-                              hasAlreadyConfirmed
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                : 'bg-resq-accent hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                            }`}
-                          >
-                            {confirming === zone.id ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <>
-                                <ShieldCheck size={14} />
-                                {hasAlreadyConfirmed ? 'Verified' : 'Confirm'}
-                              </>
+                        <div className="mt-3 flex flex-col gap-2">
+
+                          {/* Safe zone: big prominent directions button */}
+                          {zone.type === 'safe' && (
+                            <button
+                              onClick={() => {
+                                const origin = userLocation
+                                  ? `${userLocation.lat},${userLocation.lng}`
+                                  : '';
+                                const url = origin
+                                  ? `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${zone.lat},${zone.lng}&travelmode=driving`
+                                  : `https://www.google.com/maps/dir/?api=1&destination=${zone.lat},${zone.lng}&travelmode=driving`;
+                                window.open(url, '_blank');
+                              }}
+                              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[12px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-emerald-500/30"
+                            >
+                              <Navigation2 size={15} />
+                              Get Directions from My Location
+                              <ExternalLink size={12} className="opacity-70" />
+                            </button>
+                          )}
+
+                          <div className="flex gap-2">
+                            {/* Confirm button — only for hazards */}
+                            {zone.type === 'hazard' && (
+                              <button
+                                onClick={() => handleConfirm(zone.id)}
+                                disabled={hasAlreadyConfirmed || confirming === zone.id}
+                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 ${
+                                  hasAlreadyConfirmed
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : 'bg-resq-accent hover:bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                                }`}
+                              >
+                                {confirming === zone.id ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <>
+                                    <ShieldCheck size={14} />
+                                    {hasAlreadyConfirmed ? 'Verified' : 'Confirm'}
+                                  </>
+                                )}
+                              </button>
                             )}
-                          </button>
-                          <button 
-                            onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${zone.lat},${zone.lng}`, '_blank')}
-                            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-resq-card hover:bg-resq-border/40 text-resq-text font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 border border-resq-border/30"
-                          >
-                            <Navigation size={14} className="text-resq-accent" />
-                            Route
-                          </button>
+
+                            {/* Route button for danger & hazard */}
+                            {zone.type !== 'safe' && (
+                              <button
+                                onClick={() => {
+                                  const origin = userLocation
+                                    ? `${userLocation.lat},${userLocation.lng}`
+                                    : '';
+                                  const url = origin
+                                    ? `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${zone.lat},${zone.lng}&travelmode=driving`
+                                    : `https://www.google.com/maps/dir/?api=1&destination=${zone.lat},${zone.lng}&travelmode=driving`;
+                                  window.open(url, '_blank');
+                                }}
+                                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-resq-card hover:bg-resq-border/40 text-resq-text font-black text-[11px] uppercase tracking-widest transition-all active:scale-95 border border-resq-border/30"
+                              >
+                                <Navigation2 size={14} className="text-resq-accent" />
+                                Route
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </>
                     );

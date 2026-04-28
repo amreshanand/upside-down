@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import Navbar from '../components/Navbar';
@@ -7,7 +7,7 @@ import AlertFeed from '../components/AlertFeed';
 import ReportModal from '../components/ReportModal';
 import AIChat from '../components/AIChat';
 import NotificationHub from '../components/NotificationHub';
-import { AlertTriangle, Navigation } from 'lucide-react';
+import { AlertTriangle, Navigation, LocateFixed, Loader2, CheckCircle2 } from 'lucide-react';
 
 export default function Home({ user }) {
   const [zones, setZones] = useState([]);
@@ -18,122 +18,132 @@ export default function Home({ user }) {
   const [reportCoords, setReportCoords] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [locationError, setLocationError] = useState(null);
+  const [locationStatus, setLocationStatus] = useState('fetching'); // 'fetching' | 'success' | 'error'
+  const [showLocationBanner, setShowLocationBanner] = useState(true);
+  const watchIdRef = useRef(null);
 
-  // Get user location
-  useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        (error) => {
-          console.error('Geolocation error:', error);
-          setLocationError('Location access denied. Using default location.');
-          // Default to Mumbai
-          setUserLocation({ lat: 19.076, lng: 72.8777 });
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-    } else {
+  const startLocationWatch = useCallback(() => {
+    if (!navigator.geolocation) {
       setUserLocation({ lat: 19.076, lng: 72.8777 });
+      setLocationStatus('error');
+      setLocationError('Geolocation not supported. Using default location (Pune).');
+      return;
     }
+
+    // Clear any existing watcher
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+
+    setLocationStatus('fetching');
+    setLocationError(null);
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        setUserLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+        setLocationStatus('success');
+        setLocationError(null);
+        setShowLocationBanner(true);
+        // Auto-hide success banner after 3s
+        setTimeout(() => setShowLocationBanner(false), 3000);
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        setShowLocationBanner(true);
+        const msg =
+          error.code === 1
+            ? 'Browser location blocked. Click the 🔒 lock icon in the address bar → Site settings → Location → Allow, then retry.'
+            : error.code === 2
+            ? 'GPS signal unavailable. Using default location (Pune).'
+            : 'Location request timed out. Using default location (Pune).';
+        setLocationError(msg);
+        setLocationStatus('error');
+        if (!userLocation) {
+          setUserLocation({ lat: 18.5204, lng: 73.8567 });
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+    );
+  }, [userLocation]);
+
+  // Start watching location on mount
+  useEffect(() => {
+    startLocationWatch();
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
   }, []);
 
   // Real-time zones listener
   useEffect(() => {
     const q = query(collection(db, 'zones'), orderBy('timestamp', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Create dummy data near the user's current location for demonstration
-      const baseLat = userLocation?.lat || 19.076;
-      const baseLng = userLocation?.lng || 72.8777;
+      // ── PUNE SAFE ZONES: Hospitals, Police HQs, Colleges ───────────────
+      const puneStaticZones = [
+        // === HOSPITALS ===
+        { id: 'safe-sassoon',      type: 'safe', lat: 18.5196, lng: 73.8553, description: '🏥 SAFE ZONE: Sassoon General Hospital — Government hospital, 24/7 emergency, trauma centre.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-kem',          type: 'safe', lat: 18.5270, lng: 73.8628, description: '🏥 SAFE ZONE: KEM Hospital Pune — Large public hospital, emergency ward active.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-ruby',         type: 'safe', lat: 18.5287, lng: 73.8773, description: '🏥 SAFE ZONE: Ruby Hall Clinic — Multi-specialty private hospital, 24/7 ICU.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-jehangir',     type: 'safe', lat: 18.5318, lng: 73.8743, description: '🏥 SAFE ZONE: Jehangir Hospital — Tertiary care hospital, emergency services.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-deenanath',    type: 'safe', lat: 18.4931, lng: 73.8076, description: '🏥 SAFE ZONE: Deenanath Mangeshkar Hospital — 900-bed hospital, trauma & critical care.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-bharati',      type: 'safe', lat: 18.4647, lng: 73.8633, description: '🏥 SAFE ZONE: Bharati Vidyapeeth Hospital & Research Centre — Medical college hospital.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-afmc',         type: 'safe', lat: 18.5427, lng: 73.8780, description: '🏥 SAFE ZONE: AFMC Military Hospital — Armed Forces Medical College, secured campus.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-poona-hosp',   type: 'safe', lat: 18.5135, lng: 73.8626, description: '🏥 SAFE ZONE: Poona Hospital & Research Centre — Emergency & surgical care, 24/7.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-aundh-hosp',   type: 'safe', lat: 18.5598, lng: 73.8120, description: '🏥 SAFE ZONE: Aundh District Hospital — Government district hospital, emergency ward.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-noble',        type: 'safe', lat: 18.5467, lng: 73.9210, description: '🏥 SAFE ZONE: Noble Hospital, Hadapsar — Multi-specialty, 24/7 emergency.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
 
-      const dummyZones = [
-        { 
-          id: 'demo-danger-1', 
-          type: 'danger', 
-          lat: baseLat + 0.008, 
-          lng: baseLng + 0.006, 
-          description: 'CRITICAL: Severe waterlogging at Main Square. Avoid for next 4 hours.', 
-          timestamp: Date.now() - 3600000,
-          confirmations: ['a1', 'a2', 'a3'] 
-        },
-        { 
-          id: 'demo-danger-2', 
-          type: 'danger', 
-          lat: baseLat - 0.007, 
-          lng: baseLng + 0.012, 
-          description: 'EMERGENCY: Power lines down. Hazardous area. Utility crews on site.', 
-          timestamp: Date.now() - 1500000,
-          confirmations: ['b1', 'b2', 'b3', 'b4'] 
-        },
-        { 
-          id: 'demo-safe-1', 
-          type: 'safe', 
-          lat: baseLat - 0.012, 
-          lng: baseLng - 0.008, 
-          description: 'SAFE ZONE: Central High School Shelter. Medical staff present.', 
-          timestamp: Date.now() - 7200000,
-          confirmations: []
-        },
-        { 
-          id: 'demo-safe-2', 
-          type: 'safe', 
-          lat: baseLat + 0.015, 
-          lng: baseLng - 0.002, 
-          description: 'SAFE ZONE: Westside Church Shelter. Food and water available.', 
-          timestamp: Date.now() - 10800000,
-          confirmations: []
-        },
-        { 
-          id: 'demo-hazard-1', 
-          type: 'hazard', 
-          lat: baseLat + 0.004, 
-          lng: baseLng - 0.005, 
-          description: 'HAZARD: Large sinkhole opening near Park Street intersection.', 
-          timestamp: Date.now() - 1800000,
-          confirmations: ['user-1'] 
-        },
-        { 
-          id: 'demo-hazard-2', 
-          type: 'hazard', 
-          lat: baseLat - 0.003, 
-          lng: baseLng + 0.004, 
-          description: 'HAZARD: Major traffic jam due to landslide debris.', 
-          timestamp: Date.now() - 900000,
-          confirmations: ['user-2', 'user-3'] 
-        },
-        { 
-          id: 'demo-hazard-3', 
-          type: 'hazard', 
-          lat: baseLat + 0.010, 
-          lng: baseLng + 0.002, 
-          description: 'HAZARD: Broken water main causing slippery road conditions.', 
-          timestamp: Date.now() - 5400000,
-          confirmations: [] 
-        }
+        // === POLICE HEADQUARTERS ===
+        { id: 'safe-police-comm',  type: 'safe', lat: 18.5204, lng: 73.8567, description: '🚔 SAFE ZONE: Pune Police Commissioner HQ — Central police headquarters, armed deployment.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-police-rural', type: 'safe', lat: 18.5073, lng: 73.8022, description: '🚔 SAFE ZONE: Pune Rural Superintendent of Police Office — SP Office, emergency response.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-police-pim',   type: 'safe', lat: 18.6071, lng: 73.8178, description: '🚔 SAFE ZONE: Pimpri-Chinchwad Police HQ (PCMC) — Twin city police command centre.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+
+        // === SCHOOLS & COLLEGES ===
+        { id: 'safe-fergusson',    type: 'safe', lat: 18.5203, lng: 73.8407, description: '🏫 SAFE ZONE: Fergusson College — Large open campus, designated civic shelter.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-sppu',         type: 'safe', lat: 18.5576, lng: 73.8169, description: '🏫 SAFE ZONE: Savitribai Phule Pune University (SPPU) — Vast campus, disaster shelter facility.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-coep',         type: 'safe', lat: 18.5301, lng: 73.8511, description: '🏫 SAFE ZONE: College of Engineering Pune (COEP) — Old campus, strong structure, shelter.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-mit',          type: 'safe', lat: 18.4574, lng: 73.8421, description: '🏫 SAFE ZONE: MIT College of Engineering, Kothrud — Large campus, emergency assembly point.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-symbiosis',    type: 'safe', lat: 18.5249, lng: 73.8116, description: '🏫 SAFE ZONE: Symbiosis International University — Secure campus, medical centre on site.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-army-inst',    type: 'safe', lat: 18.5597, lng: 73.8943, description: '🏫 SAFE ZONE: Army Institute of Technology, Dighi — Secured army campus, shelter available.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+        { id: 'safe-wadia',        type: 'safe', lat: 18.5267, lng: 73.8648, description: '🏫 SAFE ZONE: Wadia College — Century-old campus, flood shelter registered.', timestamp: Date.now() - 86400000, confirmations: ['s1','s2','s3'] },
+
+        // ── PUNE DANGER ZONES: Flood-prone & Hazardous Areas ───────────────
+        { id: 'danger-mutha-khadak',   type: 'danger', lat: 18.4527, lng: 73.7711, description: '🚨 DANGER: Mutha River flood zone near Khadakwasla Dam — Extreme flood risk during heavy rain. Evacuate immediately.', timestamp: Date.now() - 1800000, confirmations: ['d1','d2','d3','d4'] },
+        { id: 'danger-panshet',        type: 'danger', lat: 18.3563, lng: 73.6954, description: '🚨 DANGER: Panshet Dam downstream area — High flood risk zone. Water release during heavy rainfall.', timestamp: Date.now() - 3600000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-sangam',         type: 'danger', lat: 18.5133, lng: 73.8357, description: '🚨 DANGER: Mula-Mutha River Sangam (Confluence) — Severe flooding risk. River banks breach here first.', timestamp: Date.now() - 900000, confirmations: ['d1','d2','d3','d4','d5'] },
+        { id: 'danger-vishrantwadi',   type: 'danger', lat: 18.5893, lng: 73.9046, description: '🚨 DANGER: Vishrantwadi low-lying flood zone — Water accumulates rapidly during heavy rain.', timestamp: Date.now() - 2700000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-sinhagad-rd',    type: 'danger', lat: 18.4632, lng: 73.7924, description: '🚨 DANGER: Sinhagad Road depression area — Flash flood & landslide risk from Sinhagad hills.', timestamp: Date.now() - 5400000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-hadapsar-ind',   type: 'danger', lat: 18.4966, lng: 73.9363, description: '🚨 DANGER: Hadapsar Industrial Zone — Chemical plant hazard, toxic gas risk during accidents.', timestamp: Date.now() - 7200000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-ambil-odha',     type: 'danger', lat: 18.4851, lng: 73.8443, description: '🚨 DANGER: Ambil Odha flood channel — Rapid overflow during monsoon. Stay away from banks.', timestamp: Date.now() - 1200000, confirmations: ['d1','d2','d3','d4'] },
+        { id: 'danger-kondhwa-low',    type: 'danger', lat: 18.4609, lng: 73.8819, description: '🚨 DANGER: Kondhwa low-lying pocket — Chronic waterlogging and flooding in monsoon season.', timestamp: Date.now() - 4500000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-bhosari-ind',    type: 'danger', lat: 18.6319, lng: 73.8497, description: '🚨 DANGER: Bhosari MIDC Industrial Area — Heavy machinery accident zone, chemical storage nearby.', timestamp: Date.now() - 6300000, confirmations: ['d1','d2','d3'] },
+        { id: 'danger-katraj-ghat',    type: 'danger', lat: 18.4327, lng: 73.8643, description: '🚨 DANGER: Katraj Ghat & Bypass — Landslide-prone road. Avoid during heavy rainfall.', timestamp: Date.now() - 3000000, confirmations: ['d1','d2','d3'] },
       ];
-      // Filter out any real data that is further than 10km away to keep it hyperlocal
+
+      // Filter out any real Firestore data further than 50km (keep all Pune data)
       const filterByDistance = (lat, lng) => {
-        if (!userLocation) return true; // Show all if location not yet loaded
-        const R = 6371; // Radius of the earth in km
-        const dLat = (lat - userLocation.lat) * Math.PI / 180;
-        const dLon = (lng - userLocation.lng) * Math.PI / 180;
+        const R = 6371;
+        const refLat = 18.5204; // Pune city center
+        const refLng = 73.8567;
+        const dLat = (lat - refLat) * Math.PI / 180;
+        const dLon = (lng - refLng) * Math.PI / 180;
         const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                  Math.cos(userLocation.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) * 
+                  Math.cos(refLat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) *
                   Math.sin(dLon/2) * Math.sin(dLon/2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        const d = R * c; // Distance in km
-        return d <= 10; // Only show within 10km
+        return (R * c) <= 50;
       };
 
       const zoneData = snapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
         .filter(z => filterByDistance(z.lat, z.lng));
 
-      setZones([...dummyZones, ...zoneData]);
+      setZones([...puneStaticZones, ...zoneData]);
+
     }, (error) => {
       console.error('Zones listener error:', error);
     });
@@ -228,12 +238,44 @@ export default function Home({ user }) {
         showChat={showChat}
       />
 
-      {/* Location error toast */}
-      {locationError && (
+      {/* Location Status Banner */}
+      {showLocationBanner && locationStatus === 'fetching' && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 animate-slide-down">
-          <div className="glass-card px-4 py-2 flex items-center gap-2 text-sm text-amber-400">
-            <AlertTriangle size={14} />
-            {locationError}
+          <div className="glass-card px-4 py-2 flex items-center gap-2 text-sm text-resq-accent">
+            <Loader2 size={14} className="animate-spin" />
+            Acquiring your GPS location...
+          </div>
+        </div>
+      )}
+
+      {showLocationBanner && locationStatus === 'success' && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 animate-slide-down">
+          <div className="glass-card px-4 py-2 flex items-center gap-2 text-sm text-green-400">
+            <CheckCircle2 size={14} />
+            Live location active
+          </div>
+        </div>
+      )}
+
+      {showLocationBanner && locationStatus === 'error' && locationError && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 animate-slide-down w-[90vw] max-w-lg">
+          <div className="glass-card px-4 py-2 flex items-start gap-2 text-sm text-amber-400">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+            <span className="flex-1 text-xs leading-snug">{locationError}</span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={startLocationWatch}
+                className="px-2 py-0.5 rounded-md bg-resq-accent/20 border border-resq-accent/30 text-resq-accent text-xs font-bold hover:bg-resq-accent/30 transition-all"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => setShowLocationBanner(false)}
+                className="px-2 py-0.5 rounded-md bg-resq-card text-resq-muted text-xs font-bold hover:text-resq-text transition-all"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -243,10 +285,11 @@ export default function Home({ user }) {
         zones={zones}
         userLocation={userLocation}
         onMapClick={handleMapClick}
+        userId={user?.uid}
       />
 
       {/* Notification Hub (Toasts) */}
-      <NotificationHub alerts={alerts} />
+      <NotificationHub alerts={alerts} zones={zones} />
 
       {/* Alert Feed Panel */}
       <AlertFeed
@@ -284,16 +327,24 @@ export default function Home({ user }) {
           <span className="sm:hidden">Safety</span>
         </button>
 
+        {/* Locate Me */}
+        <button
+          onClick={startLocationWatch}
+          className="floating-btn bg-resq-card border border-resq-border/50 text-resq-text hover:bg-resq-border/20"
+          title="Recenter and update my location"
+        >
+          <LocateFixed size={20} className={locationStatus === 'fetching' ? 'animate-spin text-resq-accent' : 'text-resq-accent'} />
+          <span className="hidden sm:inline">Locate Me</span>
+        </button>
+
         {/* Report Hazard */}
         <button
           onClick={() => {
-            if (userLocation) {
-              setReportCoords(userLocation);
-            }
+            setReportCoords(userLocation || { lat: 18.5204, lng: 73.8567 });
             setShowReport(true);
           }}
           className="floating-btn bg-gradient-to-r from-amber-500 to-orange-600 text-white"
-          title="Report a hazard"
+          title="Report a hazard at your current location"
         >
           <AlertTriangle size={20} />
           <span className="hidden sm:inline">Report Hazard</span>

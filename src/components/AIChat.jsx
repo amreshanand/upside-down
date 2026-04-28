@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { X, Send, Bot, User, Loader2, Sparkles, RotateCcw, ShieldAlert, Languages } from 'lucide-react';
 
 const SYSTEM_PROMPT = `You are ResQ AI, a hyperlocal disaster response assistant for India. Your role is:
@@ -12,29 +11,13 @@ const SYSTEM_PROMPT = `You are ResQ AI, a hyperlocal disaster response assistant
 
 CRITICAL: You will be provided with CURRENT SYSTEM DATA (Nearby Hazards and Official Alerts). Use this data to give specific, hyperlocal advice. If a road is blocked near the user, tell them to avoid it. If a safe zone is nearby, mention it.`;
 
-let genAI = null;
-let chatSession = null;
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
-function initializeAI() {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'your_gemini_api_key') return false;
-
-  try {
-    genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }); // Using 1.5 flash for better context handling
-    chatSession = model.startChat({
-      history: [],
-      generationConfig: {
-        temperature: 0.4, // Lower temperature for more consistent safety advice
-        topP: 0.9,
-        maxOutputTokens: 1024,
-      },
-    });
-    return true;
-  } catch (err) {
-    console.error('Gemini init error:', err);
-    return false;
-  }
+function getGroqApiKey() {
+  const key = import.meta.env.VITE_GROQ_API_KEY;
+  if (!key || key === 'your_groq_api_key_here') return null;
+  return key;
 }
 
 const QUICK_SUGGESTIONS = [
@@ -55,12 +38,14 @@ export default function AIChat({ isOpen, onClose, zones = [], alerts = [] }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [aiReady, setAiReady] = useState(false);
+  // Conversation history for Groq (OpenAI format)
+  const conversationHistory = useRef([]);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
-    const ready = initializeAI();
-    setAiReady(ready);
+    const key = getGroqApiKey();
+    setAiReady(!!key);
   }, []);
 
   useEffect(() => {
@@ -88,6 +73,59 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
 `;
   };
 
+  const callGroqAPI = async (userMessage) => {
+    const apiKey = getGroqApiKey();
+    if (!apiKey) throw new Error('Groq API key not configured');
+
+    const contextHeader = generateContextString();
+
+    // Build system message with context
+    const systemMessage = {
+      role: 'system',
+      content: `${SYSTEM_PROMPT}\n${contextHeader}`,
+    };
+
+    // Add user message to history
+    conversationHistory.current.push({
+      role: 'user',
+      content: userMessage,
+    });
+
+    // Build full messages array: system + conversation history
+    const apiMessages = [systemMessage, ...conversationHistory.current];
+
+    const response = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: apiMessages,
+        temperature: 0.4,
+        top_p: 0.9,
+        max_tokens: 1024,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData?.error?.message || `Groq API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const assistantMessage = data.choices?.[0]?.message?.content || 'No response received.';
+
+    // Add assistant response to history
+    conversationHistory.current.push({
+      role: 'assistant',
+      content: assistantMessage,
+    });
+
+    return assistantMessage;
+  };
+
   const handleSend = async (textToSend) => {
     const trimmed = typeof textToSend === 'string' ? textToSend.trim() : input.trim();
     if (!trimmed || loading) return;
@@ -103,19 +141,11 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
     setLoading(true);
 
     try {
-      if (!aiReady || !chatSession) {
+      if (!aiReady) {
         throw new Error('AI not configured');
       }
 
-      // Inject context into the prompt
-      const contextHeader = generateContextString();
-      const fullPrompt = messages.length <= 1
-        ? `${SYSTEM_PROMPT}\n${contextHeader}\nUser: ${trimmed}`
-        : `${contextHeader}\nUser: ${trimmed}`;
-
-      const result = await chatSession.sendMessage(fullPrompt);
-      const response = await result.response;
-      const text = response.text();
+      const text = await callGroqAPI(trimmed);
 
       setMessages((prev) => [
         ...prev,
@@ -132,8 +162,8 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
         {
           role: 'assistant',
           content: aiReady
-            ? '⚠️ I encountered an issue. Please try again, or call your local emergency number for immediate help.'
-            : '⚠️ **AI not configured.** Please add your Gemini API key to the `.env` file.\n\nIn the meantime, call emergency services: **112**',
+            ? `⚠️ I encountered an issue: ${error.message}. Please try again, or call your local emergency number for immediate help.`
+            : '⚠️ **AI not configured.** Please add your Groq API key to the `.env` file as `VITE_GROQ_API_KEY`.\n\nIn the meantime, call emergency services: **112**',
           timestamp: Date.now(),
         },
       ]);
@@ -143,7 +173,9 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
   };
 
   const handleReset = () => {
-    initializeAI();
+    conversationHistory.current = [];
+    const key = getGroqApiKey();
+    setAiReady(!!key);
     setMessages([
       {
         role: 'assistant',
@@ -206,8 +238,8 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
                     <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
                     SYSTEM ONLINE
                   </div>
-                  <div className="px-1.5 py-0.5 rounded-md bg-resq-accent/10 border border-resq-accent/20 text-[9px] text-resq-accent font-black uppercase tracking-widest">
-                    v2.0 Beta
+                  <div className="px-1.5 py-0.5 rounded-md bg-orange-500/10 border border-orange-500/20 text-[9px] text-orange-400 font-black uppercase tracking-widest">
+                    Groq ⚡
                   </div>
                 </div>
               </div>
@@ -333,9 +365,9 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
             
             <div className="flex items-center justify-between mt-4">
               <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-resq-accent shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                <div className="w-1.5 h-1.5 rounded-full bg-orange-400 shadow-[0_0_8px_rgba(251,146,60,0.5)]" />
                 <p className="text-[10px] text-resq-muted font-black uppercase tracking-widest">
-                  ResQ Intelligence Engine
+                  Powered by Groq ⚡ Llama 3.3
                 </p>
               </div>
               <p className="text-[9px] text-resq-muted/40 font-bold uppercase tracking-tighter">
@@ -348,4 +380,3 @@ ${activeAlerts || 'No high-severity official alerts at this time.'}
     </>
   );
 }
-
