@@ -139,6 +139,40 @@ export default function Map({ zones, userLocation, mapCenter, detectedLocation, 
 
   return (
     <div className="absolute inset-0 z-0">
+      {/* Filter Bar (Outside MapContainer to prevent click-through issues) */}
+      <div className="absolute top-24 left-0 right-0 z-[1000] w-full px-4 flex justify-center pointer-events-none">
+        <div className="glass-card p-1.5 flex gap-2 shadow-[0_12px_40px_rgba(0,0,0,0.5)] border-white/10 overflow-x-auto no-scrollbar max-w-full pointer-events-auto">
+          {[
+            { id: 'all', label: 'ALL HAZARDS', icon: AlertTriangle },
+            { id: 'flood', label: 'FLOOD', icon: Navigation2 },
+            { id: 'earthquake', label: 'EARTHQUAKE', icon: AlertTriangle },
+            { id: 'fire', label: 'FIRE', icon: AlertCircle },
+            { id: 'manmade', label: 'TECH/MAN-MADE', icon: AlertTriangle },
+            { id: 'biological', label: 'BIOLOGICAL', icon: ShieldCheck },
+            { id: 'security', label: 'SECURITY', icon: ShieldCheck },
+            { id: 'transport', label: 'TRANSPORT', icon: Navigation2 },
+            { id: 'weather', label: 'WEATHER', icon: Sparkles },
+          ].map((filter) => {
+            const Icon = filter.icon;
+            const isActive = disasterFilter === filter.id;
+            return (
+              <button
+                key={filter.id}
+                onClick={() => setDisasterFilter(filter.id)}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 shrink-0 ${
+                  isActive 
+                    ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] scale-105 border border-blue-400/50' 
+                    : 'bg-resq-dark/60 text-resq-muted hover:bg-resq-card hover:text-resq-text border border-resq-border/20'
+                }`}
+              >
+                <Icon size={14} className={isActive ? 'text-white' : 'text-blue-400/70'} />
+                {filter.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <MapContainer
         center={[center.lat, center.lng]}
         zoom={13}
@@ -153,40 +187,6 @@ export default function Map({ zones, userLocation, mapCenter, detectedLocation, 
           maxZoom={20}
           attribution='&copy; Google'
         />
-
-        {/* Filter Bar (Inside Map for better performance & persistence) */}
-        <div className="absolute top-24 left-0 right-0 z-[1000] w-full px-4 flex justify-center pointer-events-none">
-          <div className="glass-card p-1.5 flex gap-2 shadow-[0_12px_40px_rgba(0,0,0,0.5)] border-white/10 overflow-x-auto no-scrollbar max-w-full pointer-events-auto">
-            {[
-              { id: 'all', label: 'ALL HAZARDS', icon: AlertTriangle },
-              { id: 'flood', label: 'FLOOD', icon: Navigation2 },
-              { id: 'earthquake', label: 'EARTHQUAKE', icon: AlertTriangle },
-              { id: 'fire', label: 'FIRE', icon: AlertCircle },
-              { id: 'manmade', label: 'TECH/MAN-MADE', icon: AlertTriangle },
-              { id: 'biological', label: 'BIOLOGICAL', icon: ShieldCheck },
-              { id: 'security', label: 'SECURITY', icon: ShieldCheck },
-              { id: 'transport', label: 'TRANSPORT', icon: Navigation2 },
-              { id: 'weather', label: 'WEATHER', icon: Sparkles },
-            ].map((filter) => {
-              const Icon = filter.icon;
-              const isActive = disasterFilter === filter.id;
-              return (
-                <button
-                  key={filter.id}
-                  onClick={() => setDisasterFilter(filter.id)}
-                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 shrink-0 ${
-                    isActive 
-                      ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] scale-105 border border-blue-400/50' 
-                      : 'bg-resq-dark/60 text-resq-muted hover:bg-resq-card hover:text-resq-text border border-resq-border/20'
-                  }`}
-                >
-                  <Icon size={14} className={isActive ? 'text-white' : 'text-blue-400/70'} />
-                  {filter.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
 
         <MapController center={center} />
         <MapEvents onMapClick={onMapClick} />
